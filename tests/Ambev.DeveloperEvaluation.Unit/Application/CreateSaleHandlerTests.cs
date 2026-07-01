@@ -32,11 +32,12 @@ public class CreateSaleHandlerTests
 
     /// <summary>
     /// Builds the Sale entity that AutoMapper would produce for the given command,
-    /// mirroring the mapping configured in <see cref="CreateSaleProfile"/>.
+    /// mirroring the mapping configured in <see cref="CreateSaleProfile"/>, which ignores
+    /// SaleItems - the handler adds items itself afterwards via Sale.AddItem().
     /// </summary>
     private static Sale MapCommandToSale(CreateSaleCommand command)
     {
-        var sale = new Sale
+        return new Sale
         {
             CustomerId = command.CustomerId,
             CustomerName = command.CustomerName,
@@ -44,11 +45,6 @@ public class CreateSaleHandlerTests
             BranchName = command.BranchName,
             Status = SaleStatus.Active
         };
-
-        foreach (var item in command.SaleItems)
-            sale.SaleItems.Add(new SaleItem(item.ProductId, item.ProductName, item.UnitPrice, item.Quantity));
-
-        return sale;
     }
 
     /// <summary>
