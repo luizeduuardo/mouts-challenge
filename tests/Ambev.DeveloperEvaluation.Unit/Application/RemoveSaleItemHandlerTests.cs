@@ -1,10 +1,12 @@
 using Ambev.DeveloperEvaluation.Application.Sales.Common;
 using Ambev.DeveloperEvaluation.Application.Sales.RemoveSaleItem;
 using Ambev.DeveloperEvaluation.Domain.Entities;
+using Ambev.DeveloperEvaluation.Domain.Events;
 using Ambev.DeveloperEvaluation.Domain.Repositories;
 using Ambev.DeveloperEvaluation.Unit.Domain.Entities.TestData;
 using AutoMapper;
 using FluentAssertions;
+using MediatR;
 using NSubstitute;
 using Xunit;
 
@@ -14,13 +16,15 @@ public class RemoveSaleItemHandlerTests
 {
     private readonly ISaleRepository _saleRepository;
     private readonly IMapper _mapper;
+    private readonly IMediator _mediator;
     private readonly RemoveSaleItemHandler _handler;
 
     public RemoveSaleItemHandlerTests()
     {
         _saleRepository = Substitute.For<ISaleRepository>();
         _mapper = Substitute.For<IMapper>();
-        _handler = new RemoveSaleItemHandler(_saleRepository, _mapper);
+        _mediator = Substitute.For<IMediator>();
+        _handler = new RemoveSaleItemHandler(_saleRepository, _mapper, _mediator);
     }
 
     [Fact(DisplayName = "Given an existing item When removing it Then returns updated sale result")]
@@ -77,5 +81,27 @@ public class RemoveSaleItemHandlerTests
         // Then
         await act.Should().ThrowAsync<DomainException>();
         await _saleRepository.DidNotReceive().UpdateAsync(Arg.Any<Sale>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact(DisplayName = "Given an existing item When removing it Then publishes SaleModifiedEvent")]
+    public async Task Handle_ValidItem_PublishesSaleModifiedEvent()
+    {
+        // Given
+        var sale = SaleTestData.GenerateValidSaleWithItems();
+        sale.Id = Guid.NewGuid();
+        var item = sale.SaleItems.First();
+        item.Id = Guid.NewGuid();
+        sale.ClearDomainEvents(); // GenerateValidSaleWithItems's internal AddItem already queued one
+        var command = new RemoveSaleItemCommand { SaleId = sale.Id, SaleItemId = item.Id };
+
+        _saleRepository.GetByIdAsync(sale.Id, Arg.Any<CancellationToken>()).Returns(sale);
+        _saleRepository.UpdateAsync(sale, Arg.Any<CancellationToken>()).Returns(sale);
+        _mapper.Map<SaleResult>(sale).Returns(new SaleResult { Id = sale.Id });
+
+        // When
+        await _handler.Handle(command, CancellationToken.None);
+
+        // Then
+        await _mediator.Received(1).Publish(Arg.Is<object>(o => o is SaleModifiedEvent), Arg.Any<CancellationToken>());
     }
 }

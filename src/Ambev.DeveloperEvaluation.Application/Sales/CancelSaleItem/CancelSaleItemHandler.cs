@@ -1,3 +1,4 @@
+using Ambev.DeveloperEvaluation.Application.Common;
 using Ambev.DeveloperEvaluation.Application.Sales.Common;
 using Ambev.DeveloperEvaluation.Domain.Repositories;
 using AutoMapper;
@@ -10,11 +11,13 @@ public class CancelSaleItemHandler : IRequestHandler<CancelSaleItemCommand, Sale
 {
     private readonly ISaleRepository _saleRepository;
     private readonly IMapper _mapper;
+    private readonly IMediator _mediator;
 
-    public CancelSaleItemHandler(ISaleRepository saleRepository, IMapper mapper)
+    public CancelSaleItemHandler(ISaleRepository saleRepository, IMapper mapper, IMediator mediator)
     {
         _saleRepository = saleRepository;
         _mapper = mapper;
+        _mediator = mediator;
     }
 
     public async Task<SaleResult> Handle(CancelSaleItemCommand request, CancellationToken cancellationToken)
@@ -31,6 +34,7 @@ public class CancelSaleItemHandler : IRequestHandler<CancelSaleItemCommand, Sale
         sale.CancelItem(request.SaleItemId);
 
         var updatedSale = await _saleRepository.UpdateAsync(sale, cancellationToken);
+        await _mediator.DispatchDomainEventsAsync(updatedSale, cancellationToken);
 
         return _mapper.Map<SaleResult>(updatedSale);
     }

@@ -1,4 +1,6 @@
+using Ambev.DeveloperEvaluation.Domain.Entities;
 using Ambev.DeveloperEvaluation.Domain.Enums;
+using Ambev.DeveloperEvaluation.Domain.Events;
 using Ambev.DeveloperEvaluation.Unit.Domain.Entities.TestData;
 using FluentValidation;
 using Xunit;
@@ -323,5 +325,168 @@ public class SaleTests
         // Assert
         Assert.False(result.IsValid);
         Assert.NotEmpty(result.Errors);
+    }
+
+    [Fact(DisplayName = "A freshly generated sale should have no queued domain events")]
+    public void Given_NewSale_When_Inspected_Then_DomainEventsShouldBeEmpty()
+    {
+        // Arrange
+        var sale = SaleTestData.GenerateValidSale();
+
+        // Act & Assert
+        Assert.Empty(sale.DomainEvents);
+    }
+
+    [Fact(DisplayName = "ClearDomainEvents should empty the queued domain events")]
+    public void Given_SaleWithQueuedEvent_When_ClearDomainEventsCalled_Then_DomainEventsShouldBeEmpty()
+    {
+        // Arrange
+        var sale = SaleTestData.GenerateValidSale();
+        sale.Cancel(); // Cancel() will queue a SaleCancelledEvent once Task 4 lands; for now this
+                       // call only exercises existing behavior and DomainEvents is expected empty.
+
+        // Act
+        sale.ClearDomainEvents();
+
+        // Assert
+        Assert.Empty(sale.DomainEvents);
+    }
+
+    [Fact(DisplayName = "Sale.Create should build a sale with the given items and no queued events")]
+    public void Given_ValidCreateArguments_When_Created_Then_SaleHasItemsAndNoQueuedEvents()
+    {
+        // Arrange
+        var customerId = Guid.NewGuid();
+        var branchId = Guid.NewGuid();
+        var items = new[]
+        {
+            (ProductId: Guid.NewGuid(), ProductName: "Product 1", Quantity: 2, UnitPrice: 10m),
+            (ProductId: Guid.NewGuid(), ProductName: "Product 2", Quantity: 3, UnitPrice: 20m)
+        };
+
+        // Act
+        var sale = Sale.Create(customerId, "Customer", branchId, "Branch", items);
+
+        // Assert
+        Assert.Equal(2, sale.SaleItems.Count);
+        Assert.Equal(2 * 10m + 3 * 20m, sale.TotalAmount);
+        Assert.Empty(sale.DomainEvents);
+    }
+
+    [Fact(DisplayName = "Sale.Create with no items should queue no events")]
+    public void Given_CreateArgumentsWithNoItems_When_Created_Then_DomainEventsShouldBeEmpty()
+    {
+        // Arrange & Act
+        var sale = Sale.Create(Guid.NewGuid(), "Customer", Guid.NewGuid(), "Branch", []);
+
+        // Assert
+        Assert.Empty(sale.SaleItems);
+        Assert.Empty(sale.DomainEvents);
+    }
+
+    [Fact(DisplayName = "MarkAsCreated should queue a single SaleCreatedEvent built from current sale state")]
+    public void Given_CreatedSale_When_MarkAsCreatedCalled_Then_QueuesSaleCreatedEventWithCurrentValues()
+    {
+        // Arrange
+        var sale = Sale.Create(Guid.NewGuid(), "Customer", Guid.NewGuid(), "Branch",
+            [(Guid.NewGuid(), "Product 1", 2, 10m)]);
+        sale.Id = Guid.NewGuid();
+        sale.SaleNumber = 4242;
+
+        // Act
+        sale.MarkAsCreated();
+
+        // Assert
+        var domainEvent = Assert.Single(sale.DomainEvents);
+        var createdEvent = Assert.IsType<SaleCreatedEvent>(domainEvent);
+        Assert.Equal(sale.Id, createdEvent.SaleId);
+        Assert.Equal(sale.SaleNumber, createdEvent.SaleNumber);
+        Assert.Equal(sale.CustomerId, createdEvent.CustomerId);
+        Assert.Equal(sale.TotalAmount, createdEvent.TotalAmount);
+    }
+
+    [Fact(DisplayName = "Cancelling a sale should queue a SaleCancelledEvent")]
+    public void Given_ActiveSale_When_Cancelled_Then_QueuesSaleCancelledEvent()
+    {
+        // Arrange
+        var sale = SaleTestData.GenerateValidSale();
+
+        // Act
+        sale.Cancel();
+
+        // Assert
+        var domainEvent = Assert.Single(sale.DomainEvents);
+        var cancelledEvent = Assert.IsType<SaleCancelledEvent>(domainEvent);
+        Assert.Equal(sale.Id, cancelledEvent.SaleId);
+        Assert.Equal(sale.SaleNumber, cancelledEvent.SaleNumber);
+    }
+
+    [Fact(DisplayName = "Adding an item should queue a SaleModifiedEvent")]
+    public void Given_ValidSale_When_ItemAdded_Then_QueuesSaleModifiedEvent()
+    {
+        // Arrange
+        var sale = SaleTestData.GenerateValidSale();
+
+        // Act
+        sale.AddItem(SaleItemTestData.GenerateValidProductId(), SaleItemTestData.GenerateValidProductName(), SaleItemTestData.GenerateQuantityWithoutDiscount(), SaleItemTestData.GenerateValidUnitPrice());
+
+        // Assert
+        var domainEvent = Assert.Single(sale.DomainEvents);
+        var modifiedEvent = Assert.IsType<SaleModifiedEvent>(domainEvent);
+        Assert.Equal(sale.TotalAmount, modifiedEvent.TotalAmount);
+    }
+
+    [Fact(DisplayName = "Updating an item quantity should queue a SaleModifiedEvent")]
+    public void Given_SaleWithItem_When_ItemQuantityUpdated_Then_QueuesSaleModifiedEvent()
+    {
+        // Arrange
+        var sale = SaleTestData.GenerateValidSale();
+        sale.AddItem(SaleItemTestData.GenerateValidProductId(), SaleItemTestData.GenerateValidProductName(), 1, SaleItemTestData.GenerateValidUnitPrice());
+        var itemId = sale.SaleItems.Single().Id;
+        sale.ClearDomainEvents();
+
+        // Act
+        sale.UpdateItemQuantity(itemId, 15);
+
+        // Assert
+        var domainEvent = Assert.Single(sale.DomainEvents);
+        Assert.IsType<SaleModifiedEvent>(domainEvent);
+    }
+
+    [Fact(DisplayName = "Removing an item should queue a SaleModifiedEvent")]
+    public void Given_SaleWithItem_When_ItemRemoved_Then_QueuesSaleModifiedEvent()
+    {
+        // Arrange
+        var sale = SaleTestData.GenerateValidSale();
+        sale.AddItem(SaleItemTestData.GenerateValidProductId(), SaleItemTestData.GenerateValidProductName(), SaleItemTestData.GenerateQuantityWithoutDiscount(), SaleItemTestData.GenerateValidUnitPrice());
+        var itemId = sale.SaleItems.Single().Id;
+        sale.ClearDomainEvents();
+
+        // Act
+        sale.RemoveItem(itemId);
+
+        // Assert
+        var domainEvent = Assert.Single(sale.DomainEvents);
+        Assert.IsType<SaleModifiedEvent>(domainEvent);
+    }
+
+    [Fact(DisplayName = "Cancelling an item should queue an ItemCancelledEvent, not a SaleModifiedEvent")]
+    public void Given_SaleWithItem_When_ItemCancelled_Then_QueuesItemCancelledEventOnly()
+    {
+        // Arrange
+        var sale = SaleTestData.GenerateValidSale();
+        sale.AddItem(SaleItemTestData.GenerateValidProductId(), SaleItemTestData.GenerateValidProductName(), SaleItemTestData.GenerateQuantityWithoutDiscount(), SaleItemTestData.GenerateValidUnitPrice());
+        var item = sale.SaleItems.Single();
+        sale.ClearDomainEvents();
+
+        // Act
+        sale.CancelItem(item.Id);
+
+        // Assert
+        var domainEvent = Assert.Single(sale.DomainEvents);
+        var itemCancelledEvent = Assert.IsType<ItemCancelledEvent>(domainEvent);
+        Assert.Equal(sale.Id, itemCancelledEvent.SaleId);
+        Assert.Equal(item.Id, itemCancelledEvent.SaleItemId);
+        Assert.Equal(item.ProductId, itemCancelledEvent.ProductId);
     }
 }

@@ -1,5 +1,6 @@
 using Ambev.DeveloperEvaluation.Domain.Common;
 using Ambev.DeveloperEvaluation.Domain.Enums;
+using Ambev.DeveloperEvaluation.Domain.Events;
 using Ambev.DeveloperEvaluation.Domain.Validation;
 using FluentValidation;
 using FluentValidation.Results;
@@ -29,6 +30,34 @@ public class Sale : BaseEntity
         CreatedAt = DateTime.UtcNow;
     }
 
+    public static Sale Create(
+        Guid customerId,
+        string customerName,
+        Guid branchId,
+        string branchName,
+        IEnumerable<(Guid ProductId, string ProductName, int Quantity, decimal UnitPrice)> items)
+    {
+        var sale = new Sale
+        {
+            CustomerId = customerId,
+            CustomerName = customerName,
+            BranchId = branchId,
+            BranchName = branchName
+        };
+
+        foreach (var item in items)
+            sale.AddItem(item.ProductId, item.ProductName, item.Quantity, item.UnitPrice);
+
+        sale.ClearDomainEvents();
+
+        return sale;
+    }
+
+    public void MarkAsCreated()
+    {
+        AddDomainEvent(new SaleCreatedEvent(Id, SaleNumber, CustomerId, CustomerName, BranchId, BranchName, TotalAmount, CreatedAt));
+    }
+
     public ValidationResult Validate()
     {
         var validator = new SaleValidator();
@@ -43,6 +72,8 @@ public class Sale : BaseEntity
 
         Status = SaleStatus.Cancelled;
         UpdateTime();
+
+        AddDomainEvent(new SaleCancelledEvent(Id, SaleNumber, UpdatedAt));
     }
 
     public void AddItem(Guid productId, string productName, int quantity, decimal unitPrice)
@@ -62,6 +93,8 @@ public class Sale : BaseEntity
 
         SaleItems.Add(item);
         RecalculateTotalAmount();
+
+        AddDomainEvent(new SaleModifiedEvent(Id, SaleNumber, TotalAmount, UpdatedAt));
     }
 
     public void UpdateItemQuantity(Guid saleItemId, int newQuantity)
@@ -74,6 +107,8 @@ public class Sale : BaseEntity
 
         item.UpdateQuantity(newQuantity);
         RecalculateTotalAmount();
+
+        AddDomainEvent(new SaleModifiedEvent(Id, SaleNumber, TotalAmount, UpdatedAt));
     }
 
     public void CancelItem(Guid saleItemId)
@@ -86,6 +121,8 @@ public class Sale : BaseEntity
 
         item.Cancel();
         RecalculateTotalAmount();
+
+        AddDomainEvent(new ItemCancelledEvent(Id, item.Id, item.ProductId, item.ProductName, UpdatedAt));
     }
 
     public void RemoveItem(Guid saleItemId)
@@ -98,6 +135,8 @@ public class Sale : BaseEntity
 
         SaleItems.Remove(item);
         RecalculateTotalAmount();
+
+        AddDomainEvent(new SaleModifiedEvent(Id, SaleNumber, TotalAmount, UpdatedAt));
     }
 
     private void RecalculateTotalAmount()

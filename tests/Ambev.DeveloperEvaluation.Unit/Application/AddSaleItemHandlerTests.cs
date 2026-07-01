@@ -1,11 +1,13 @@
 using Ambev.DeveloperEvaluation.Application.Sales.AddSaleItem;
 using Ambev.DeveloperEvaluation.Application.Sales.Common;
 using Ambev.DeveloperEvaluation.Domain.Entities;
+using Ambev.DeveloperEvaluation.Domain.Events;
 using Ambev.DeveloperEvaluation.Domain.Repositories;
 using Ambev.DeveloperEvaluation.Unit.Application.TestData;
 using Ambev.DeveloperEvaluation.Unit.Domain.Entities.TestData;
 using AutoMapper;
 using FluentAssertions;
+using MediatR;
 using NSubstitute;
 using Xunit;
 
@@ -15,13 +17,15 @@ public class AddSaleItemHandlerTests
 {
     private readonly ISaleRepository _saleRepository;
     private readonly IMapper _mapper;
+    private readonly IMediator _mediator;
     private readonly AddSaleItemHandler _handler;
 
     public AddSaleItemHandlerTests()
     {
         _saleRepository = Substitute.For<ISaleRepository>();
         _mapper = Substitute.For<IMapper>();
-        _handler = new AddSaleItemHandler(_saleRepository, _mapper);
+        _mediator = Substitute.For<IMediator>();
+        _handler = new AddSaleItemHandler(_saleRepository, _mapper, _mediator);
     }
 
     [Fact(DisplayName = "Given a valid item When adding to sale Then returns updated sale result")]
@@ -97,5 +101,31 @@ public class AddSaleItemHandlerTests
         // Then
         await act.Should().ThrowAsync<FluentValidation.ValidationException>();
         await _saleRepository.DidNotReceive().UpdateAsync(Arg.Any<Sale>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact(DisplayName = "Given a valid item When adding to sale Then publishes SaleModifiedEvent")]
+    public async Task Handle_ValidItem_PublishesSaleModifiedEvent()
+    {
+        // Given
+        var sale = SaleTestData.GenerateValidSale();
+        sale.Id = Guid.NewGuid();
+        var command = new AddSaleItemCommand
+        {
+            SaleId = sale.Id,
+            ProductId = AddSaleItemHandlerTestData.GenerateValidProductId(),
+            ProductName = AddSaleItemHandlerTestData.GenerateValidProductName(),
+            UnitPrice = AddSaleItemHandlerTestData.GenerateValidUnitPrice(),
+            Quantity = AddSaleItemHandlerTestData.GenerateValidQuantity()
+        };
+
+        _saleRepository.GetByIdAsync(sale.Id, Arg.Any<CancellationToken>()).Returns(sale);
+        _saleRepository.UpdateAsync(sale, Arg.Any<CancellationToken>()).Returns(sale);
+        _mapper.Map<SaleResult>(sale).Returns(new SaleResult { Id = sale.Id });
+
+        // When
+        await _handler.Handle(command, CancellationToken.None);
+
+        // Then
+        await _mediator.Received(1).Publish(Arg.Is<object>(o => o is SaleModifiedEvent), Arg.Any<CancellationToken>());
     }
 }

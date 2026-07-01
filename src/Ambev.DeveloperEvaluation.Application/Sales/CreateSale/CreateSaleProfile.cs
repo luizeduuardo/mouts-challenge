@@ -7,8 +7,6 @@ public class CreateSaleProfile : Profile
 {
     public CreateSaleProfile()
     {
-        CreateMap<CreateSaleCommand, Sale>()
-            .ForMember(dest => dest.SaleItems, opt => opt.Ignore());
         CreateMap<Sale, CreateSaleResult>();
     }
 }
